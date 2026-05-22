@@ -1,0 +1,8 @@
+# Please create your local config file local.config.yaml with secrets
+
+bitcoin:
+  host: "localhost"
+  port: "8332"
+  username: "secret-username"
+  password: "secret-password"
+  address: "bitcoin-address"
