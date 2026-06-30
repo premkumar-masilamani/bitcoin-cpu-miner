@@ -1,53 +1,43 @@
-# Bitcoin Miner
-- Simple bitcoin miner written in go.
-- Interacts with the Bitcoin Full Node running in the local machine.
+# Bitcoin CPU Miner
 
-## Pre-requisites
+A simple, educational Bitcoin CPU miner written in Go that interacts with a local Bitcoin full node.
 
-1. Install bitcoin full node. Please follow the [instructions](https://bitcoin.org/en/full-node).
-   - If you are running the macOS, please compile from the source code. Please follow the [instructions](https://github.com/bitcoin/bitcoin/blob/master/doc/build-osx.md).
-   - I prefer to run `make install` at the end, to copy the binaries to the `/usr/local/bin` folder. You can leave the binaries the `src` folder and add to the $PATH as well.
+---
 
-2. Create a bitcoin config file with the name `bitcoin.conf` inside the folder which has bitcoin blocks.
+## Getting Started
+
+Follow these guides in the `docs` directory to set up, configure, and run the project:
+
+1. **[Bitcoin Node Setup Guide](docs/bitcoin_node_setup.md)**: Instructions to install and run a local Bitcoin full node (`bitcoind`) on macOS using Homebrew, covering MainNet, TestNet, RegTest, and SimNet configurations.
+2. **[Address & Key Generation Guide](docs/bitcoin_address_generation.md)**: Instructions on generating valid public addresses and WIF private keys for all network environments, including using the offline automated generator script.
+3. **[Miner Pipeline Architecture](docs/bitcoin_cpu_miner_instructions.md)**: A step-by-step conceptual walkthrough of how a Bitcoin CPU miner works under the hood and how it maps to the codebase packages and functions.
+
+---
+
+## Configuration & Usage
+
+### 1. Configure the Miner
+Create your local configuration by copying the template config:
+```bash
+cp cmd/config/config.yaml cmd/config/config.local.yaml
 ```
-# server=1 tells Bitcoin-Qt and bitcoind to accept JSON-RPC commands
-server=1
+Open `cmd/config/config.local.yaml` and update the host, port, RPC credentials, and mining payout address corresponding to your local Bitcoin node.
 
-# RPC User name and password
-rpcuser=bitcoinrpcuser
-rpcpassword=hard-to-guess-rpc-password
-
-# Listen for RPC connections on this TCP port:
-rpcport=8332
-```
-
-3. Run bitcoin full node in daemon mode. I keep the data in a separate flash drive, and it looks like this.
-```
-bitcoind -disablewallet -datadir=/Volumes/Prem/Bitcoin/FullNode
-```
-
-3a. You can run the bitcoin core in daemon mode as well.
-```
-bitcoind -daemon -datadir=/Volumes/Prem/Bitcoin/FullNode
+### 2. Run the Address Generator (Optional)
+Generate random test addresses and WIF private keys for any environment offline:
+```bash
+go run cmd/keygen/main.go
 ```
 
-## Running Bitcoin Miner
-
-1. Create the configuration file. You can copy the file `cmd/config/config.yaml` to `cmd/config/config.local.yaml`. Please update the relevant secrets.
-
-| Config Name      | Default Value | Required |
-|:-----------------|:--------------|:---------|
-| bitcoin.host     | "localhost"   | Yes      |
-| bitcoin.port     | "8332"        | Yes      |
-| bitcoin.username | ""            | Yes      |
-| bitcoin.password | ""            | Yes      |
-
-2. Install the dependencies
-```
-go get github.com/btcsuite/btcd/rpcclient
+### 3. Run Quality Verification & Unit Tests
+Run the project's test suite:
+```bash
+make test
 ```
 
-3. Run the program
-```
+### 4. Run the CPU Miner
+Start mining block templates retrieved from your local node:
+```bash
 make run
 ```
+*(By default, it will look for `cmd/config/config.local.yaml` as the config path. Pass a custom path using `go run cmd/miner/main.go --config=<path>` if needed).*
