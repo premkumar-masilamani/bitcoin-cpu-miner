@@ -1,43 +1,33 @@
 package util
 
 import (
+	"bytes"
 	"encoding/hex"
-	"log"
+	"fmt"
+	"math/big"
 	"strconv"
 	"time"
 
 	"github.com/btcsuite/btcd/btcjson"
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 )
 
-/*
-Right shift the binary number by 8 bits in a loop until the value becomes zero.
-
-Ex. Let's find out how many bytes are needed to represent 12345. By looking at the
-representation, we can easily figure out that it requires 2 bytes.
-
-Decimal: 12345
-Binary:	00110000 00111001
-
-Let's do that programmatically.
-Right shift by 8 bits: 00000000 00110000. The value is greater than zero.
-Right shift by 8 bits: 00000000 00000000. The value is NOT greater than zero.
-
-We right shifted 8 bits, two times. So, the bytes required to represent 12345 is 2 bytes.
-*/
+// GetByteCountForInteger calculates how many bytes are required to represent
+// the given 64-bit integer.
 func GetByteCountForInteger(number int64) byte {
 	var byteCount byte
 	for number > 0 {
-		rightShiftedBy8Bits := number >> 8
-		number = rightShiftedBy8Bits
+		number >>= 8
 		byteCount++
 	}
 	return byteCount
 }
 
-/*
-https://learnmeabitcoin.com/technical/little-endian
-*/
+// ConvertIntegerToLittleEndianByteArray converts a 64-bit integer to a
+// little-endian byte slice of the specified byte count.
 func ConvertIntegerToLittleEndianByteArray(number int64, byteCount int) []byte {
 	littleEndianByteArray := make([]byte, byteCount)
 	for i := 0; i < byteCount; i++ {
@@ -46,131 +36,229 @@ func ConvertIntegerToLittleEndianByteArray(number int64, byteCount int) []byte {
 	return littleEndianByteArray
 }
 
-/*
-https://developer.bitcoin.org/reference/transactions.html#compactsize-unsigned-integers
-*/
-func ConvertIntegerToCompactUnsignedInteger(number int64) []byte {
-	if number <= 0xfc {
-		return ConvertIntegerToLittleEndianByteArray(number, 1)
-	} else if number <= 0xffff {
-		return append([]byte{0xfd}, ConvertIntegerToLittleEndianByteArray(number, 2)...)
-	} else if number <= 0xffffffff {
-		return append([]byte{0xfe}, ConvertIntegerToLittleEndianByteArray(number, 4)...)
-	}
-	return append([]byte{0xff}, ConvertIntegerToLittleEndianByteArray(number, 8)...)
-}
-
-/*
-Encode the block height to be used in coinbase transaction as per BIP 0034
-https://github.com/bitcoin/bips/blob/master/bip-0034.mediawiki
-First Byte: No. of bytes required to represent the block height (0x03)
-Subsequent Bytes: Little Endian representation of block height
-*/
+// EncodeBlockHeight encodes the block height as a byte slice according to BIP-34.
+// The first byte represents the length of the height value, followed by the
+// height encoded as a little-endian integer.
 func EncodeBlockHeight(blockHeight int64) []byte {
-
-	// First Byte: Byte Count
 	byteCount := GetByteCountForInteger(blockHeight)
-
-	// Subsequent Bytes: Little Endian Integer Representation
-	littleEndianByteArray := ConvertIntegerToLittleEndianByteArray(blockHeight, int(byteCount))
-
-	// Append them together
-	encodedBlockHeight := make([]byte, byteCount+1)
-	encodedBlockHeight = append(encodedBlockHeight, byteCount)
-	encodedBlockHeight = append(encodedBlockHeight, littleEndianByteArray...)
-
-	// Appending a slice to another slice increases the capacity by
-	// 8 bytes. We need only the bytes with values. So, trimming it.
-	return encodedBlockHeight[byteCount+1:]
+	littleEndian := ConvertIntegerToLittleEndianByteArray(blockHeight, int(byteCount))
+	return append([]byte{byteCount}, littleEndian...)
 }
 
-/*
-Coinbase Transaction is the first transaction in any block, without a transaction input.
-Bitcoins are created out of nothing. The bitcoin value produced by the coinbase transaction
-is the Miner's Reward Fee + Fees from all the transactions included in the current block.
+// CreateCoinbaseTx creates a new BIP-34 compliant coinbase transaction.
+// It sets a null previous outpoint, puts the block height and custom coinbase message 
+// into the scriptSig, and pays the coinbase subsidy + fees to the miner's address.
+func CreateCoinbaseTx(blockHeight int64, coinbaseValue int64, minerAddress string, params *chaincfg.Params, coinbaseMsg string) (*wire.MsgTx, error) {
+	tx := wire.NewMsgTx(1) // Coinbase Tx version 1
 
-https://developer.bitcoin.org/reference/transactions.html#coinbase-input-the-input-of-the-first-transaction-in-a-block
-*/
-func MakeCoinbaseTransaction(coinbaseScript string, coinbaseAddress string, coinbaseValue int64) string {
+	// A coinbase input spends a null hash and an index of 0xffffffff
+	nullHash := chainhash.Hash{}
+	prevOut := wire.NewOutPoint(&nullHash, 0xffffffff)
 
-	// OP_DUP OP_HASH160 <len to push> <pubkey> OP_EQUALVERIFY OP_CHECKSIG
-	publicKeyScript := "76" + "a9" + "14" + "a6b31013949f07e6e244e3f563aa336dd4c58402" + "88" + "ac"
-	// TODO: Fix the Hash160 conversion
-	log.Printf("btcutil.Hash160([]byte(coinbaseAddress)): %s", hex.EncodeToString(btcutil.Hash160([]byte(coinbaseAddress))))
+	// Build the coinbase script (BIP-34 requires the block height to be the first item)
+	encodedHeight := EncodeBlockHeight(blockHeight)
+	scriptSig := append(encodedHeight, []byte(coinbaseMsg)...)
 
-	// Version
-	coinbaseTxData := "01000000"
-	// Number of inputs
-	coinbaseTxData += "01"
-	// Previous outpoint TXID
-	coinbaseTxData += "0000000000000000000000000000000000000000000000000000000000000000"
-	// Previous outpoint index
-	coinbaseTxData += "ffffffff"
-	// Bytes in coinbase
-	coinbaseTxData += hex.EncodeToString(ConvertIntegerToCompactUnsignedInteger(int64(len(coinbaseScript))))
-	//// input[0] script
-	coinbaseTxData += hex.EncodeToString([]byte(coinbaseScript))
-	//// input[0] seq num
-	coinbaseTxData += "ffffffff"
-	//// out-counter
-	coinbaseTxData += "01"
-	//// output[0] value
-	coinbaseTxData += hex.EncodeToString(ConvertIntegerToLittleEndianByteArray(coinbaseValue, 8))
-	// output[0] script len
-	coinbaseTxData += "19" //TODO: hex.EncodeToString(ConvertIntegerToCompactUnsignedInteger(int64(len(publicKeyScript))))
-	// output[0] script
-	coinbaseTxData += publicKeyScript
-	// lock-time
-	coinbaseTxData += "00000000"
-
-	log.Printf("coinbaseTxData: %s", coinbaseTxData)
-	log.Printf("hex.EncodeToString(ConvertIntegerToCompactUnsignedInteger(int64(len(coinbaseScript)))): %s", hex.EncodeToString(ConvertIntegerToCompactUnsignedInteger(int64(len(coinbaseScript)))))
-	log.Printf("hex.EncodeToString(ConvertIntegerToCompactUnsignedInteger(int64(len(publicKeyScript)))): %s", hex.EncodeToString(ConvertIntegerToCompactUnsignedInteger(int64(len(publicKeyScript)))))
-	return coinbaseTxData
-}
-
-/*
-Single threaded implementation to mine a block
-*/
-func MineBlock(blockTemplateResult *btcjson.GetBlockTemplateResult, coinbaseAddress string) (*btcutil.Block, error) {
-
-	// Any string encoded in hex to be included in the coinbase transaction
-	coinbaseMessage := hex.EncodeToString([]byte("smileprem"))
-	log.Printf("coinbaseMessage: %s", coinbaseMessage)
-
-	// Block Height encoded in ascii hex
-	encodedBlockHeight := hex.EncodeToString(EncodeBlockHeight(blockTemplateResult.Height))
-	log.Printf("encodedBlockHeight: %s", encodedBlockHeight)
-
-	// Bitcoin address to which the block rewards and fees should be sent
-	log.Printf("coinbaseAddress: %s", coinbaseAddress)
-
-	targetHash := blockTemplateResult.Target
-	log.Printf("targetHash: %s", targetHash)
-
-	startTime := time.Now()
-	log.Printf("startTime: %s", startTime)
-
-	nonce := 0
-	log.Printf("nonce: %d", nonce)
-
-	for nonce < 0xffffffff {
-		coinbaseScript := encodedBlockHeight + coinbaseMessage + strconv.Itoa(nonce)
-
-		coinbaseTransaction := &btcjson.GetBlockTemplateResultTx{
-			Data:    MakeCoinbaseTransaction(coinbaseScript, coinbaseAddress, *blockTemplateResult.CoinbaseValue),
-			Hash:    "",
-			TxID:    "",
-			Depends: nil,
-			Fee:     0,
-			SigOps:  0,
-			Weight:  0,
-		}
-		blockTemplateResult.CoinbaseTxn = coinbaseTransaction
-		nonce++
-		//https: //medium.com/coinmonks/how-to-create-a-raw-bitcoin-transaction-step-by-step-239b888e87f2
+	// Enforce the consensus limit on scriptSig length (between 2 and 100 bytes)
+	if len(scriptSig) > 100 {
+		scriptSig = scriptSig[:100]
 	}
 
-	block := &btcutil.Block{}
-	return block, nil
+	txIn := wire.NewTxIn(prevOut, scriptSig, nil)
+	txIn.Sequence = 0xffffffff
+	tx.AddTxIn(txIn)
+
+	// Create output script paying to the miner's address
+	pkScript, err := ConvertBitcoinAddressToPayToAddrScript(minerAddress, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate output script for address: %v", err)
+	}
+
+	txOut := wire.NewTxOut(coinbaseValue, pkScript)
+	tx.AddTxOut(txOut)
+
+	return tx, nil
+}
+
+// CalcMerkleRoot computes the Merkle root of a list of transaction hashes
+// using Bitcoin's standard double-SHA256 binary tree algorithm.
+func CalcMerkleRoot(hashes []chainhash.Hash) chainhash.Hash {
+	if len(hashes) == 0 {
+		return chainhash.Hash{}
+	}
+
+	// Copy transaction hashes into our working layer
+	level := make([]chainhash.Hash, len(hashes))
+	copy(level, hashes)
+
+	// Pair up hashes and double-hash them until one remains
+	for len(level) > 1 {
+		var nextLevel []chainhash.Hash
+		for i := 0; i < len(level); i += 2 {
+			var concat [64]byte
+			if i+1 < len(level) {
+				copy(concat[0:32], level[i][:])
+				copy(concat[32:64], level[i+1][:])
+			} else {
+				// Odd count: concatenate the hash with itself
+				copy(concat[0:32], level[i][:])
+				copy(concat[32:64], level[i][:])
+			}
+			nextLevel = append(nextLevel, chainhash.DoubleHashH(concat[:]))
+		}
+		level = nextLevel
+	}
+
+	return level[0]
+}
+
+// CompactToBig converts a 32-bit compact representation of a difficulty target
+// (often referred to as 'nBits' or 'bits') to a 256-bit big integer target threshold.
+func CompactToBig(compact uint32) *big.Int {
+	mantissa := compact & 0x007fffff
+	isNegative := compact&0x00800000 != 0
+	exponent := uint(compact >> 24)
+
+	var value *big.Int
+	if exponent <= 3 {
+		value = big.NewInt(int64(mantissa))
+		value.Rsh(value, 8*(3-exponent))
+	} else {
+		value = big.NewInt(int64(mantissa))
+		value.Lsh(value, 8*(exponent-3))
+	}
+
+	if isNegative {
+		value.Neg(value)
+	}
+
+	return value
+}
+
+// HashToBig converts a 32-byte block hash (little-endian internal format)
+// to a big-endian big.Int for arithmetic comparison against the target.
+func HashToBig(hash *chainhash.Hash) *big.Int {
+	// A Hash is in little-endian. To treat it as a big-endian number, reverse it.
+	buf := *hash
+	for i := 0; i < len(buf)/2; i++ {
+		buf[i], buf[len(buf)-1-i] = buf[len(buf)-1-i], buf[i]
+	}
+	return new(big.Int).SetBytes(buf[:])
+}
+
+// MineBlock performs Proof of Work to mine a block matching the target difficulty
+// defined in the block template. It constructs the coinbase transaction,
+// deserializes memory-pool transactions, and runs a hashing loop until a valid nonce
+// is found or a timeout occurs.
+func MineBlock(blockTemplateResult *btcjson.GetBlockTemplateResult, minerAddress string, params *chaincfg.Params) (*btcutil.Block, error) {
+	if blockTemplateResult == nil {
+		return nil, fmt.Errorf("block template result cannot be nil")
+	}
+
+	// 1. Deserialize memory-pool transactions from the block template
+	var templateTxs []*wire.MsgTx
+	for _, t := range blockTemplateResult.Transactions {
+		txBytes, err := hex.DecodeString(t.Data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode transaction hex: %v", err)
+		}
+
+		var msgTx wire.MsgTx
+		err = msgTx.Deserialize(bytes.NewReader(txBytes))
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize transaction data: %v", err)
+		}
+		templateTxs = append(templateTxs, &msgTx)
+	}
+
+	// 2. Parse the target difficulty bits
+	bitsValue, err := strconv.ParseUint(blockTemplateResult.Bits, 16, 32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse bits hex %q: %v", blockTemplateResult.Bits, err)
+	}
+	bits := uint32(bitsValue)
+	target := CompactToBig(bits)
+
+	// 3. Initialize state variables for mining
+	var (
+		extraNonce = 0
+		nonce      = uint32(0)
+		version    = blockTemplateResult.Version
+		blockTime  = time.Unix(blockTemplateResult.CurTime, 0)
+		startTime  = time.Now()
+	)
+
+	prevHash, err := chainhash.NewHashFromStr(blockTemplateResult.PreviousHash)
+	if err != nil {
+		return nil, fmt.Errorf("invalid previous block hash: %v", err)
+	}
+
+	// 4. Hashing Loop
+	for {
+		// Periodically check for timeout limit
+		if time.Since(startTime).Seconds() > float64(MiningDurationInSeconds) {
+			return nil, fmt.Errorf("mining timed out after %d seconds", MiningDurationInSeconds)
+		}
+
+		// Re-construct coinbase transaction with the current extraNonce
+		coinbaseMsg := "smileprem-extra-" + strconv.Itoa(extraNonce)
+		coinbaseTx, err := CreateCoinbaseTx(blockTemplateResult.Height, *blockTemplateResult.CoinbaseValue, minerAddress, params, coinbaseMsg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create coinbase transaction: %v", err)
+		}
+
+		// Bundle all transactions
+		blockTxs := make([]*wire.MsgTx, 0, 1+len(templateTxs))
+		blockTxs = append(blockTxs, coinbaseTx)
+		blockTxs = append(blockTxs, templateTxs...)
+
+		// Calculate Merkle Root
+		txHashes := make([]chainhash.Hash, len(blockTxs))
+		for i, tx := range blockTxs {
+			txHashes[i] = tx.TxHash()
+		}
+		merkleRoot := CalcMerkleRoot(txHashes)
+
+		// Set up the block header template
+		header := wire.BlockHeader{
+			Version:    version,
+			PrevBlock:  *prevHash,
+			MerkleRoot: merkleRoot,
+			Timestamp:  blockTime,
+			Bits:       bits,
+			Nonce:      nonce,
+		}
+
+		// Inner loop scanning nonces
+		for {
+			blockHash := header.BlockHash()
+			hashVal := HashToBig(&blockHash)
+
+			// If block hash satisfies target, we found a block!
+			if hashVal.Cmp(target) <= 0 {
+				msgBlock := wire.MsgBlock{
+					Header:       header,
+					Transactions: blockTxs,
+				}
+				return btcutil.NewBlock(&msgBlock), nil
+			}
+
+			nonce++
+			header.Nonce = nonce
+
+			// If nonce wrapped back to 0, break to vary extraNonce / time
+			if nonce == 0 {
+				break
+			}
+		}
+
+		// Vary extraNonce and update block timestamp when nonce range is exhausted
+		extraNonce++
+		nowUnix := time.Now().Unix()
+		if nowUnix > blockTemplateResult.CurTime {
+			blockTime = time.Unix(nowUnix, 0)
+		} else {
+			blockTime = blockTime.Add(time.Second)
+		}
+	}
 }

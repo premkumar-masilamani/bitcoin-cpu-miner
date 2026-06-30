@@ -1,27 +1,47 @@
 package util
 
 import (
+	"encoding/hex"
 	"testing"
+
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestValidConvertBitcoinAddressToP2PKHScript(t *testing.T) {
-	bitcoinAddress := "1GCRgM2L6tzjwfm7okZNL16K1J9wus85We"
-	// bitcoinAddress := "1C7zdTfnkzmr13HfA2vNm5SJYRK6nEKyq8"
-	expectedP2PKHScript := "OP_DUP OP_HASH160 79fbfc3f34e7745860d76137da68f362380c606c OP_EQUALVERIFY OP_CHECKSIG"
-	actualP2PKHScript, err := ConvertBitcoinAddressToP2PKHScript(bitcoinAddress)
-	if err != nil {
-		t.Error(err)
+func TestConvertBitcoinAddressToPayToAddrScript_Valid(t *testing.T) {
+	tests := []struct {
+		name           string
+		bitcoinAddress string
+		params         *chaincfg.Params
+		expectedHex    string
+	}{
+		{
+			name:           "MainNet Address 1GCRgM...",
+			bitcoinAddress: "1GCRgM2L6tzjwfm7okZNL16K1J9wus85We",
+			params:         &chaincfg.MainNetParams,
+			expectedHex:    "76a914a6b31013949f07e6e244e3f563aa336dd4c5840288ac",
+		},
+		{
+			name:           "MainNet Address 1C7zdT...",
+			bitcoinAddress: "1C7zdTfnkzmr13HfA2vNm5SJYRK6nEKyq8",
+			params:         &chaincfg.MainNetParams,
+			expectedHex:    "76a91479fbfc3f34e7745860d76137da68f362380c606c88ac",
+		},
 	}
-	if actualP2PKHScript != expectedP2PKHScript {
-		t.Errorf("Mismatch for Bitcoin Address.\nExpected: %s\nActual: %s", expectedP2PKHScript, actualP2PKHScript)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actualBytes, err := ConvertBitcoinAddressToPayToAddrScript(tt.bitcoinAddress, tt.params)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedHex, hex.EncodeToString(actualBytes))
+		})
 	}
 }
 
-func TestInValidConvertBitcoinAddressToP2PKHScript(t *testing.T) {
+func TestConvertBitcoinAddressToPayToAddrScript_Invalid(t *testing.T) {
 	bitcoinAddress := "invalid bitcoin address"
-	expectedError := "decoded address is of unknown format"
-	_, err := ConvertBitcoinAddressToP2PKHScript(bitcoinAddress)
-	if err == nil || err.Error() != expectedError {
-		t.Error(err)
-	}
+	_, err := ConvertBitcoinAddressToPayToAddrScript(bitcoinAddress, &chaincfg.MainNetParams)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "decoded address is of unknown format")
 }

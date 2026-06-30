@@ -2,4 +2,6 @@ package util
 
 const CoinbaseTransactionVersion = "01000000"
 const CoinbaseTransactionPreviousHash = "0000000000000000000000000000000000000000000000000000000000000000"
-const MiningDurationInSeconds = 540
+
+// MiningDurationInSeconds is a variable allowing tests to override it for timeout simulation.
+var MiningDurationInSeconds = 540
